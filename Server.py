@@ -1,5 +1,5 @@
 from fastmcp import FastMCP
-from Database import get_sales_df
+from database import get_sales_df
 from fastapi import FastAPI
 
 mcp = FastMCP("Retail Assistant")

@@ -1,5 +1,5 @@
 from pathlib import Path
-from Parser import parse_bill_register
+from parser import parse_bill_register
 import pandas as pd
 
 BASE_DIR = Path(__file__).parent
