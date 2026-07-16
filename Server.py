@@ -1,6 +1,8 @@
 from fastmcp import FastMCP
 from database import get_sales_df
 from fastapi import FastAPI
+import os
+import uvicorn
 
 mcp = FastMCP("Retail Assistant")
 
@@ -110,14 +112,6 @@ def founder_summary():
 
 
 app = mcp.http_app()
-
-@app.get("/")
-def health():
-
-    return {
-        "status": "ok"
-    }
-
 
 if __name__ == "__main__":
 

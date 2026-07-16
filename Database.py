@@ -4,16 +4,6 @@ import pandas as pd
 
 BASE_DIR = Path(__file__).parent
 
-sales_path = (
-    BASE_DIR /
-    "reports" /
-    "sales.xlsx"
-)
-
-sales_df = parse_bill_register(
-    sales_path
-)
-
 
 def extract_brand(name):
 
@@ -28,12 +18,21 @@ def extract_brand(name):
     return "Unknown"
 
 
-sales_df["brand"] = (
-    sales_df["item_name"]
-    .apply(extract_brand)
-)
-
-
 def get_sales_df():
+
+    sales_path = (
+        BASE_DIR /
+        "reports" /
+        "sales.xlsx"
+    )
+
+    sales_df = parse_bill_register(
+        sales_path
+    )
+
+    sales_df["brand"] = (
+        sales_df["item_name"]
+        .apply(extract_brand)
+    )
 
     return sales_df.copy()
