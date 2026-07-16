@@ -1,6 +1,5 @@
 from fastmcp import FastMCP
 from database import get_sales_df
-from fastapi import FastAPI
 import os
 import uvicorn
 
