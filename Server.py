@@ -1,5 +1,6 @@
 from fastmcp import FastMCP
 from Database import get_sales_df
+from fastapi import FastAPI
 
 mcp = FastMCP("Retail Assistant")
 
@@ -108,19 +109,27 @@ def founder_summary():
     }
 
 
-if __name__ == "__main__":
+app = mcp.http_app()
 
-    import os
+@app.get("/")
+def health():
+
+    return {
+        "status": "ok"
+    }
+
+
+if __name__ == "__main__":
 
     PORT = int(
         os.environ.get(
             "PORT",
-            8000
+            8080
         )
     )
 
-    mcp.run(
-        transport="streamable-http",
+    uvicorn.run(
+        app,
         host="0.0.0.0",
         port=PORT
     )
