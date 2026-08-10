@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: retail-assistant-mcp
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    envVars:
+      - key: IMAP_SERVER
+        value: imap.gmail.com
+      - key: IMAP_PORT
+        value: "993"
+      - key: EMAIL_USER
+        sync: false # Render will prompt you for this value during setup
+      - key: EMAIL_PASSWORD
+        sync: false # Render will prompt you for this value during setup
+      - key: SALES_SUBJECT_FILTER
+        value: "Store sales Report"
+      - key: INVENTORY_SUBJECT_FILTER
+        value: "Latest Inventory"
