@@ -1,7 +1,8 @@
-fastmcp
-pandas
-openpyxl
-numpy
-python-dotenv
 fastapi
 uvicorn
+python-dotenv
+openpyxl
+numpy
+pandas
+fastmcp>=0.8.0
+sse-starlette
