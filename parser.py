@@ -95,3 +95,61 @@ def parse_inventory(file_path_or_buffer):
             print(f"Error parsing inventory report: {e} | CSV fallback error: {e_inner}")
             df = pd.DataFrame()
     return df
+
+
+def parse_generic_report(file_path_or_buffer):
+    """
+    Parses a tabular report generically by dynamically detecting the column header row.
+    Accepts a file path string, Path object, or file-like object (like io.BytesIO).
+    """
+    try:
+        # Load raw dataframe without headers first
+        df_raw = pd.read_excel(file_path_or_buffer, header=None)
+    except Exception as e:
+        try:
+            if hasattr(file_path_or_buffer, 'seek'):
+                file_path_or_buffer.seek(0)
+            df_raw = pd.read_csv(file_path_or_buffer, header=None)
+        except Exception as e_inner:
+            print(f"Error reading report generically: {e} | CSV error: {e_inner}")
+            return pd.DataFrame()
+
+    if df_raw.empty:
+        return pd.DataFrame()
+
+    # Find the header row
+    # Heuristic: evaluate each row to see which one has the most non-null, unique-like column elements
+    header_idx = 0
+    max_score = -1
+    
+    for idx in range(min(15, len(df_raw))):
+        row = df_raw.iloc[idx]
+        # Count non-null string/numeric entries that are likely headers (non-empty and not just simple numbers)
+        score = sum(1 for val in row if pd.notna(val) and len(str(val).strip()) > 0 and not str(val).strip().replace('.', '', 1).isdigit())
+        if score > max_score:
+            max_score = score
+            header_idx = idx
+
+    print(f"[Generic Parser] Automatically detected header row at index: {header_idx}")
+    
+    # Reload or slice the dataframe starting from the header row
+    df = df_raw.iloc[header_idx + 1:].copy()
+    
+    # Extract headers
+    headers = []
+    for i, h in enumerate(df_raw.iloc[header_idx]):
+        if pd.notna(h) and len(str(h).strip()) > 0:
+            headers.append(str(h).strip())
+        else:
+            headers.append(f"Column_{i}")
+            
+    df.columns = headers
+    
+    # Drop rows that are completely empty
+    df.dropna(how='all', inplace=True)
+    
+    # Reset index
+    df.reset_index(drop=True, inplace=True)
+    
+    return df
+

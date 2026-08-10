@@ -10,22 +10,25 @@ import pandas as pd
 mcp = FastMCP("Retail Assistant")
 
 
+def _get_mapped_columns(df):
+    rev_col = next((c for c in df.columns if any(p in str(c).lower() for p in ['net_amount', 'net', 'amount', 'amt', 'sale', 'total'])), None)
+    bill_col = next((c for c in df.columns if any(p in str(c).lower() for p in ['bill_no', 'bill', 'invoice', 'no', 'number', 'doc'])), None)
+    qty_col = next((c for c in df.columns if any(p in str(c).lower() for p in ['qty', 'quantity', 'pcs', 'unit'])), None)
+    brand_col = "brand" if "brand" in df.columns else next((c for c in df.columns if any(p in str(c).lower() for p in ['brand', 'item', 'article'])), None)
+    return rev_col, bill_col, qty_col, brand_col
+
+
 @mcp.tool()
 def get_total_sales():
-
     sales = get_sales_df()
+    if sales.empty:
+        return {"revenue": 0.0, "bills": 0, "units": 0}
 
-    revenue = float(
-        sales["net_amount"].sum()
-    )
+    rev_col, bill_col, qty_col, _ = _get_mapped_columns(sales)
 
-    bills = int(
-        sales["bill_no"].nunique()
-    )
-
-    units = int(
-        sales["qty"].sum()
-    )
+    revenue = float(sales[rev_col].sum()) if rev_col else 0.0
+    bills = int(sales[bill_col].nunique()) if bill_col else 0
+    units = int(sales[qty_col].sum()) if qty_col else 0
 
     return {
         "revenue": revenue,
@@ -36,24 +39,19 @@ def get_total_sales():
 
 @mcp.tool()
 def get_brand_sales(brand: str):
-
     sales = get_sales_df()
+    if sales.empty:
+        return {"brand": brand, "revenue": 0.0, "units": 0}
 
-    df = sales[
-        sales["brand"]
-        .astype(str)
-        .str.lower()
-        ==
-        brand.lower()
-    ]
+    rev_col, _, qty_col, brand_col = _get_mapped_columns(sales)
 
-    revenue = float(
-        df["net_amount"].sum()
-    )
+    if not brand_col:
+        return {"brand": brand, "revenue": 0.0, "units": 0, "message": "No brand or item column detected."}
 
-    units = int(
-        df["qty"].sum()
-    )
+    df = sales[sales[brand_col].astype(str).str.lower() == brand.lower()]
+
+    revenue = float(df[rev_col].sum()) if rev_col else 0.0
+    units = int(df[qty_col].sum()) if qty_col else 0
 
     return {
         "brand": brand,
@@ -64,16 +62,20 @@ def get_brand_sales(brand: str):
 
 @mcp.tool()
 def get_top_brands():
-
     sales = get_sales_df()
+    if sales.empty:
+        return {}
+
+    rev_col, _, _, brand_col = _get_mapped_columns(sales)
+
+    if not brand_col or not rev_col:
+        return {"message": "Brand or revenue column not found."}
 
     top = (
-        sales.groupby("brand")
-        ["net_amount"]
+        sales.groupby(brand_col)
+        [rev_col]
         .sum()
-        .sort_values(
-            ascending=False
-        )
+        .sort_values(ascending=False)
         .head(10)
     )
 
@@ -82,35 +84,31 @@ def get_top_brands():
 
 @mcp.tool()
 def founder_summary():
-
     sales = get_sales_df()
+    if sales.empty:
+        return {"total_revenue": 0.0, "top_brand": "None", "average_bill": 0.0}
 
-    revenue = float(
-        sales["net_amount"].sum()
-    )
+    rev_col, bill_col, _, brand_col = _get_mapped_columns(sales)
 
-    top_brand = (
-        sales.groupby("brand")
-        ["net_amount"]
-        .sum()
-        .idxmax()
-    )
+    revenue = float(sales[rev_col].sum()) if rev_col else 0.0
+    
+    top_brand = "None"
+    if brand_col and rev_col:
+        try:
+            top_brand = sales.groupby(brand_col)[rev_col].sum().idxmax()
+        except Exception:
+            pass
 
-    avg_bill = (
-        sales["net_amount"]
-        .sum()
-        /
-        sales["bill_no"]
-        .nunique()
-    )
+    avg_bill = 0.0
+    if rev_col and bill_col:
+        total_bills = sales[bill_col].nunique()
+        if total_bills > 0:
+            avg_bill = sales[rev_col].sum() / total_bills
 
     return {
-        "total_revenue":
-            revenue,
-        "top_brand":
-            top_brand,
-        "average_bill":
-            round(avg_bill, 2)
+        "total_revenue": revenue,
+        "top_brand": top_brand,
+        "average_bill": round(avg_bill, 2)
     }
 
 
@@ -237,7 +235,101 @@ def query_inventory_data(query_str: str = None, department: str = None, division
     }
 
 
+@mcp.tool()
+def query_dataframe_stats(dataframe_name: str, metric: str, column: str = None, groupby: str = None, filter_query: str = None):
+    """
+    Perform statistical aggregations (sum, mean, count, unique_count, value_counts) on sales or inventory data.
+    This lets you calculate sums, averages, and group stats directly on the server to answer quantitative business questions.
+    - dataframe_name: 'sales' or 'inventory'
+    - metric: 'sum', 'mean', 'count', 'unique_count', 'value_counts'
+    - column: Column name to aggregate (e.g. 'Net Amount', 'Qty', 'MRP', 'Gross Amount')
+    - groupby: Column name to group by (e.g. 'brand', 'Department', 'Store', 'Bill Date')
+    - filter_query: Optional pandas query string to filter rows before aggregation (e.g. `brand == 'SainSisters'`)
+    """
+    if dataframe_name == "sales":
+        df = get_sales_df()
+    elif dataframe_name == "inventory":
+        df = get_inventory_df()
+    else:
+        return {"error": "dataframe_name must be 'sales' or 'inventory'"}
+        
+    if df.empty:
+        return {"message": f"Dataframe '{dataframe_name}' is empty or not loaded."}
+        
+    # Apply filter if provided
+    if filter_query:
+        try:
+            df = df.query(filter_query)
+        except Exception as e:
+            return {"error": f"Invalid filter query: {e}"}
+            
+    if df.empty:
+        return {"message": "No rows matched the filter criteria."}
+        
+    # Handle 'value_counts' (doesn't require a specific aggregation column, or counts values of the column)
+    if metric == "value_counts":
+        col_to_count = column or groupby
+        if not col_to_count or col_to_count not in df.columns:
+            return {"error": f"Please specify a valid column for value_counts. Available: {list(df.columns)}"}
+        counts = df[col_to_count].value_counts().head(30)
+        return {
+            "metric": "value_counts",
+            "column": col_to_count,
+            "results": counts.to_dict()
+        }
+        
+    if not column or column not in df.columns:
+        return {"error": f"Please specify a valid column. Available columns: {list(df.columns)}"}
+        
+    # Perform aggregation
+    try:
+        if groupby:
+            if groupby not in df.columns:
+                return {"error": f"Groupby column '{groupby}' not found. Available: {list(df.columns)}"}
+                
+            grouped = df.groupby(groupby)[column]
+            if metric == "sum":
+                result = grouped.sum()
+            elif metric == "mean":
+                result = grouped.mean()
+            elif metric == "count":
+                result = grouped.count()
+            elif metric == "unique_count":
+                result = grouped.nunique()
+            else:
+                return {"error": f"Unsupported grouped metric '{metric}'"}
+                
+            # Sort descending and get top 30 to avoid token bloat
+            result = result.sort_values(ascending=False).head(30)
+            return {
+                "metric": metric,
+                "column": column,
+                "groupby": groupby,
+                "results": result.to_dict()
+            }
+        else:
+            if metric == "sum":
+                val = df[column].sum()
+            elif metric == "mean":
+                val = df[column].mean()
+            elif metric == "count":
+                val = df[column].count()
+            elif metric == "unique_count":
+                val = df[column].nunique()
+            else:
+                return {"error": f"Unsupported metric '{metric}'"}
+                
+            return {
+                "metric": metric,
+                "column": column,
+                "result": float(val) if isinstance(val, (int, float, complex)) else str(val)
+            }
+    except Exception as e:
+        return {"error": f"Aggregation error: {e}"}
+
+
 # Background thread to sync reports periodically (every 10 minutes)
+
 def run_background_sync():
     print("[Server] Starting background report sync daemon...")
     # Initial sync on startup

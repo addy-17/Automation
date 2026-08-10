@@ -10,7 +10,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 # Import the parsing functions from parser
-from parser import parse_bill_register, parse_inventory
+from parser import parse_bill_register, parse_inventory, parse_generic_report
 
 # Load environment variables
 load_dotenv()
@@ -149,7 +149,7 @@ def refresh_all_reports(force=False):
             attachment_bytes, filename = sales_email_data
             try:
                 print(f"[Sync] Parsing sales data from email attachment: {filename}")
-                temp_sales_df = parse_bill_register(io.BytesIO(attachment_bytes))
+                temp_sales_df = parse_generic_report(io.BytesIO(attachment_bytes))
                 source_used = "Email"
             except Exception as e:
                 print(f"[Sync] Error parsing sales email attachment: {e}")
@@ -175,7 +175,7 @@ def refresh_all_reports(force=False):
             if sales_path.exists():
                 try:
                     print(f"[Sync] Email fetch failed/skipped. Loading sales from local file: {sales_path}")
-                    temp_sales_df = parse_bill_register(sales_path)
+                    temp_sales_df = parse_generic_report(sales_path)
                     source_used = "Local File" if source_used == "None" else "Mixed"
                 except Exception as e:
                     print(f"[Sync] Error parsing local sales file: {e}")
@@ -197,8 +197,19 @@ def refresh_all_reports(force=False):
         # 3. Post-process and update cache
         if temp_sales_df is not None:
             if not temp_sales_df.empty:
-                # Make sure brand column is calculated
-                temp_sales_df["brand"] = temp_sales_df["item_name"].apply(extract_brand)
+                # Find an item or brand column dynamically to populate brand field if missing
+                item_col = None
+                for col in temp_sales_df.columns:
+                    col_str = str(col).lower()
+                    if 'item' in col_str or 'brand' in col_str or 'article' in col_str:
+                        item_col = col
+                        break
+                
+                if "brand" not in temp_sales_df.columns:
+                    if item_col:
+                        temp_sales_df["brand"] = temp_sales_df[item_col].apply(extract_brand)
+                    else:
+                        temp_sales_df["brand"] = "Unknown"
             _sales_df = temp_sales_df
 
         if temp_inventory_df is not None:
