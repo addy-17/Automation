@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables (Sensitive credentials)
+.env
+
+# Ginesys Excel/CSV Reports (Confidential company data)
+reports/
+*.xlsx
+*.xls
+*.csv
+
+# Editor settings
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
