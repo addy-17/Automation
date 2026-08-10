@@ -20,6 +20,8 @@ BASE_DIR = Path(__file__).parent
 # Global in-memory caches and state
 _sales_df = None
 _inventory_df = None
+_vendor_sales_df = None
+_goods_receive_df = None
 _last_sync_time = None
 _sync_source = "None"
 _sync_lock = threading.Lock()
@@ -122,15 +124,17 @@ def refresh_all_reports(force=False):
     Attempts to fetch from email first. Falls back to local files in the reports/ directory
     if email configuration is missing, fails, or reports aren't found in mail.
     """
-    global _sales_df, _inventory_df, _last_sync_time, _sync_source
+    global _sales_df, _inventory_df, _vendor_sales_df, _goods_receive_df, _last_sync_time, _sync_source
 
     with _sync_lock:
         # If already loaded and force is False, don't run again
-        if not force and _sales_df is not None and _inventory_df is not None:
+        if not force and _sales_df is not None and _inventory_df is not None and _vendor_sales_df is not None and _goods_receive_df is not None:
             return {
                 "status": "Success (cached)",
                 "sales_count": len(_sales_df),
                 "inventory_count": len(_inventory_df),
+                "vendor_sales_count": len(_vendor_sales_df) if _vendor_sales_df is not None else 0,
+                "goods_receive_count": len(_goods_receive_df) if _goods_receive_df is not None else 0,
                 "source": _sync_source,
                 "last_sync_time": _last_sync_time
             }
@@ -138,9 +142,13 @@ def refresh_all_reports(force=False):
         print("[Sync] Initiating data synchronization...")
         sales_subject = os.getenv("SALES_SUBJECT_FILTER", "POS Bill Register")
         inventory_subject = os.getenv("INVENTORY_SUBJECT_FILTER", "Latest Inventory")
+        vendor_sales_subject = os.getenv("VENDOR_SALES_SUBJECT_FILTER", "Vendor Wise Sales Report")
+        goods_receive_subject = os.getenv("GOODS_RECEIVE_SUBJECT_FILTER", "Goods Receive Report")
 
         temp_sales_df = None
         temp_inventory_df = None
+        temp_vendor_sales_df = None
+        temp_goods_receive_df = None
         source_used = "None"
 
         # 1. Try to fetch from Email
@@ -167,7 +175,30 @@ def refresh_all_reports(force=False):
             except Exception as e:
                 print(f"[Sync] Error parsing inventory email attachment: {e}")
 
+        # 1c. Vendor-wise sales report
+        vendor_sales_email_data = fetch_latest_report_attachment(vendor_sales_subject)
+        if vendor_sales_email_data:
+            attachment_bytes, filename = vendor_sales_email_data
+            try:
+                print(f"[Sync] Parsing vendor sales data from email attachment: {filename}")
+                temp_vendor_sales_df = parse_generic_report(io.BytesIO(attachment_bytes))
+                source_used = "Email" if source_used == "None" else source_used
+            except Exception as e:
+                print(f"[Sync] Error parsing vendor sales email attachment: {e}")
+
+        # 1d. Goods receive report
+        goods_receive_email_data = fetch_latest_report_attachment(goods_receive_subject)
+        if goods_receive_email_data:
+            attachment_bytes, filename = goods_receive_email_data
+            try:
+                print(f"[Sync] Parsing goods receive data from email attachment: {filename}")
+                temp_goods_receive_df = parse_generic_report(io.BytesIO(attachment_bytes))
+                source_used = "Email" if source_used == "None" else source_used
+            except Exception as e:
+                print(f"[Sync] Error parsing goods receive email attachment: {e}")
+
         # 2. Fall back to Local Files for missing reports
+
         local_reports_dir = BASE_DIR / "reports"
 
         if temp_sales_df is None:
@@ -194,7 +225,30 @@ def refresh_all_reports(force=False):
             else:
                 print("[Sync] Local inventory report not found.")
 
+        # Vendor-wise sales local fallback
+        if temp_vendor_sales_df is None:
+            vendor_sales_path = local_reports_dir / "vendor_wise_sales.xlsx"
+            if vendor_sales_path.exists():
+                try:
+                    print(f"[Sync] Loading vendor sales from local file: {vendor_sales_path}")
+                    temp_vendor_sales_df = parse_generic_report(vendor_sales_path)
+                    source_used = "Local File" if source_used == "None" else "Mixed"
+                except Exception as e:
+                    print(f"[Sync] Error parsing local vendor sales file: {e}")
+
+        # Goods receive local fallback
+        if temp_goods_receive_df is None:
+            goods_receive_path = local_reports_dir / "goods_receive.xlsx"
+            if goods_receive_path.exists():
+                try:
+                    print(f"[Sync] Loading goods receive from local file: {goods_receive_path}")
+                    temp_goods_receive_df = parse_generic_report(goods_receive_path)
+                    source_used = "Local File" if source_used == "None" else "Mixed"
+                except Exception as e:
+                    print(f"[Sync] Error parsing local goods receive file: {e}")
+
         # 3. Post-process and update cache
+
         if temp_sales_df is not None:
             if not temp_sales_df.empty:
                 # Find an item or brand column dynamically to populate brand field if missing
@@ -215,6 +269,12 @@ def refresh_all_reports(force=False):
         if temp_inventory_df is not None:
             _inventory_df = temp_inventory_df
 
+        if temp_vendor_sales_df is not None:
+            _vendor_sales_df = temp_vendor_sales_df
+
+        if temp_goods_receive_df is not None:
+            _goods_receive_df = temp_goods_receive_df
+
         # Determine success status
         if _sales_df is not None and _inventory_df is not None:
             status = "Success"
@@ -231,6 +291,8 @@ def refresh_all_reports(force=False):
             "status": status,
             "sales_count": len(_sales_df) if _sales_df is not None else 0,
             "inventory_count": len(_inventory_df) if _inventory_df is not None else 0,
+            "vendor_sales_count": len(_vendor_sales_df) if _vendor_sales_df is not None else 0,
+            "goods_receive_count": len(_goods_receive_df) if _goods_receive_df is not None else 0,
             "source": _sync_source,
             "last_sync_time": _last_sync_time
         }
@@ -260,7 +322,28 @@ def get_inventory_df(force_refresh=False):
     return _inventory_df.copy()
 
 
+def get_vendor_sales_df(force_refresh=False):
+    """Return a copy of the vendor-wise sales report."""
+    global _vendor_sales_df
+    if _vendor_sales_df is None or force_refresh:
+        refresh_all_reports(force=force_refresh)
+    if _vendor_sales_df is None:
+        return pd.DataFrame()
+    return _vendor_sales_df.copy()
+
+
+def get_goods_receive_df(force_refresh=False):
+    """Return a copy of the goods receive report."""
+    global _goods_receive_df
+    if _goods_receive_df is None or force_refresh:
+        refresh_all_reports(force=force_refresh)
+    if _goods_receive_df is None:
+        return pd.DataFrame()
+    return _goods_receive_df.copy()
+
+
 def get_sync_status():
+
     """
     Returns metadata about the current in-memory cache status.
     """
@@ -270,5 +353,9 @@ def get_sync_status():
         "sales_loaded": _sales_df is not None,
         "sales_rows": len(_sales_df) if _sales_df is not None else 0,
         "inventory_loaded": _inventory_df is not None,
-        "inventory_rows": len(_inventory_df) if _inventory_df is not None else 0
+        "inventory_rows": len(_inventory_df) if _inventory_df is not None else 0,
+        "vendor_sales_loaded": _vendor_sales_df is not None,
+        "vendor_sales_rows": len(_vendor_sales_df) if _vendor_sales_df is not None else 0,
+        "goods_receive_loaded": _goods_receive_df is not None,
+        "goods_receive_rows": len(_goods_receive_df) if _goods_receive_df is not None else 0
     }

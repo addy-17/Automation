@@ -152,4 +152,3 @@ def parse_generic_report(file_path_or_buffer):
     df.reset_index(drop=True, inplace=True)
     
     return df
-

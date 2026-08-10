@@ -1,5 +1,5 @@
 from fastmcp import FastMCP
-from database import get_sales_df, get_inventory_df, refresh_all_reports, get_sync_status
+from database import (get_sales_df, get_inventory_df, get_vendor_sales_df, get_goods_receive_df, refresh_all_reports, get_sync_status)
 from fastapi import FastAPI
 import os
 import uvicorn
@@ -131,6 +131,8 @@ def get_data_dictionary():
     status = get_sync_status()
     sales = get_sales_df()
     inventory = get_inventory_df()
+    vendor_sales = get_vendor_sales_df()
+    goods_receive = get_goods_receive_df()
     
     return {
         "sync_status": status,
@@ -143,6 +145,14 @@ def get_data_dictionary():
             "columns": list(inventory.columns) if not inventory.empty else [],
             "dtypes": {col: str(dtype) for col, dtype in inventory.dtypes.items()} if not inventory.empty else {},
             "sample_row": inventory.head(1).to_dict(orient="records")[0] if not inventory.empty else {}
+        },
+        "vendor_sales_report": {
+            "columns": list(vendor_sales.columns) if not vendor_sales.empty else [],
+            "sample_row": vendor_sales.head(1).to_dict(orient="records")[0] if not vendor_sales.empty else {}
+        },
+        "goods_receive_report": {
+            "columns": list(goods_receive.columns) if not goods_receive.empty else [],
+            "sample_row": goods_receive.head(1).to_dict(orient="records")[0] if not goods_receive.empty else {}
         }
     }
 
@@ -326,6 +336,166 @@ def query_dataframe_stats(dataframe_name: str, metric: str, column: str = None, 
             }
     except Exception as e:
         return {"error": f"Aggregation error: {e}"}
+
+
+
+def _find_column(df, patterns):
+    """Find the first column whose name matches one of the supplied patterns."""
+    return next(
+        (c for c in df.columns if any(p in str(c).lower() for p in patterns)),
+        None
+    )
+
+
+@mcp.tool()
+def get_vendor_wise_sales(vendor: str = None, start_date: str = None,
+                          end_date: str = None, limit: int = 50):
+    """
+    Return vendor-wise sales report data.
+
+    Optional filters:
+    - vendor: vendor/supplier name (case-insensitive)
+    - start_date/end_date: date range when a date column exists
+    - limit: maximum rows returned, up to 200
+    """
+    df = get_vendor_sales_df()
+    if df.empty:
+        return {"message": "No vendor-wise sales report is currently loaded."}
+
+    vendor_col = _find_column(df, ["vendor", "supplier", "party", "vendor name", "supplier name"])
+    date_col = _find_column(df, ["date", "bill date", "invoice date", "sale date"])
+
+    if vendor and vendor_col:
+        df = df[df[vendor_col].astype(str).str.lower().str.strip() == vendor.lower().strip()]
+
+    if (start_date or end_date) and date_col:
+        dates = pd.to_datetime(df[date_col], errors="coerce")
+        if start_date:
+            df = df[dates >= pd.to_datetime(start_date)]
+        if end_date:
+            dates = pd.to_datetime(df[date_col], errors="coerce")
+            df = df[dates <= pd.to_datetime(end_date)]
+
+    total_matches = len(df)
+    limit = min(max(1, limit), 200)
+
+    return {
+        "report": "Vendor Wise Sales Report",
+        "vendor_column": str(vendor_col) if vendor_col else None,
+        "date_column": str(date_col) if date_col else None,
+        "total_matches": total_matches,
+        "returned_rows": min(total_matches, limit),
+        "data": df.head(limit).to_dict(orient="records")
+    }
+
+
+@mcp.tool()
+def get_vendor_sales_summary():
+    """Summarize sales grouped by vendor/supplier."""
+    df = get_vendor_sales_df()
+    if df.empty:
+        return {"message": "No vendor-wise sales report is currently loaded."}
+
+    vendor_col = _find_column(df, ["vendor", "supplier", "party", "vendor name", "supplier name"])
+    amount_col = _find_column(df, ["net amount", "net", "amount", "sale", "sales", "total", "value"])
+    qty_col = _find_column(df, ["qty", "quantity", "pcs", "units"])
+
+    if not vendor_col:
+        return {"error": "Vendor/supplier column not found.", "available_columns": list(df.columns)}
+
+    if not amount_col and not qty_col:
+        return {
+            "error": "Sales amount or quantity column not found.",
+            "available_columns": list(df.columns)
+        }
+
+    group = df.groupby(vendor_col)
+    result = pd.DataFrame(index=group.size().index)
+    result["rows"] = group.size()
+
+    if amount_col:
+        result["sales_amount"] = pd.to_numeric(df[amount_col], errors="coerce").groupby(df[vendor_col]).sum()
+    if qty_col:
+        result["units"] = pd.to_numeric(df[qty_col], errors="coerce").groupby(df[vendor_col]).sum()
+
+    sort_col = "sales_amount" if "sales_amount" in result.columns else "units"
+    result = result.sort_values(sort_col, ascending=False).head(100)
+
+    return {
+        "report": "Vendor Wise Sales Summary",
+        "vendor_column": str(vendor_col),
+        "amount_column": str(amount_col) if amount_col else None,
+        "quantity_column": str(qty_col) if qty_col else None,
+        "results": result.reset_index().to_dict(orient="records")
+    }
+
+
+@mcp.tool()
+def get_goods_receive_report(start_date: str = None, end_date: str = None,
+                             vendor: str = None, limit: int = 50):
+    """
+    Return Goods Receive Report data with optional date and vendor filters.
+    """
+    df = get_goods_receive_df()
+    if df.empty:
+        return {"message": "No Goods Receive Report is currently loaded."}
+
+    vendor_col = _find_column(df, ["vendor", "supplier", "party", "vendor name", "supplier name"])
+    date_col = _find_column(df, ["date", "grn date", "goods receive date", "receipt date", "document date"])
+
+    if vendor and vendor_col:
+        df = df[df[vendor_col].astype(str).str.lower().str.strip() == vendor.lower().strip()]
+
+    if start_date and date_col:
+        dates = pd.to_datetime(df[date_col], errors="coerce")
+        df = df[dates >= pd.to_datetime(start_date)]
+
+    if end_date and date_col:
+        dates = pd.to_datetime(df[date_col], errors="coerce")
+        df = df[dates <= pd.to_datetime(end_date)]
+
+    total_matches = len(df)
+    limit = min(max(1, limit), 200)
+
+    return {
+        "report": "Goods Receive Report",
+        "vendor_column": str(vendor_col) if vendor_col else None,
+        "date_column": str(date_col) if date_col else None,
+        "total_matches": total_matches,
+        "returned_rows": min(total_matches, limit),
+        "data": df.head(limit).to_dict(orient="records")
+    }
+
+
+@mcp.tool()
+def get_goods_receive_summary():
+    """Summarize Goods Receive Report by vendor and/or quantity/value when columns exist."""
+    df = get_goods_receive_df()
+    if df.empty:
+        return {"message": "No Goods Receive Report is currently loaded."}
+
+    vendor_col = _find_column(df, ["vendor", "supplier", "party", "vendor name", "supplier name"])
+    qty_col = _find_column(df, ["qty", "quantity", "pcs", "units", "received qty"])
+    amount_col = _find_column(df, ["amount", "value", "net amount", "total", "cost", "purchase"])
+
+    result = {"report": "Goods Receive Summary", "rows": len(df)}
+
+    if vendor_col:
+        counts = df[vendor_col].astype(str).value_counts().head(100)
+        result["vendor_receipt_counts"] = counts.to_dict()
+
+    if qty_col:
+        result["total_quantity"] = float(pd.to_numeric(df[qty_col], errors="coerce").sum())
+
+    if amount_col:
+        result["total_value"] = float(pd.to_numeric(df[amount_col], errors="coerce").sum())
+
+    result["detected_columns"] = {
+        "vendor": str(vendor_col) if vendor_col else None,
+        "quantity": str(qty_col) if qty_col else None,
+        "amount": str(amount_col) if amount_col else None
+    }
+    return result
 
 
 # Background thread to sync reports periodically (every 10 minutes)
