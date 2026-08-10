@@ -4,5 +4,5 @@ python-dotenv
 openpyxl
 numpy
 pandas
-fastmcp>=0.8.0
+fastmcp==0.8.0      # <‑‑ exact version that has sse_app()
 sse-starlette
