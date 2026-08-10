@@ -3,6 +3,6 @@ uvicorn
 python-dotenv
 openpyxl
 numpy
-pandas
-fastmcp==0.8.0      # <‑‑ exact version that has sse_app()
+pandas>=2.0
+fastmcp==3.4.6      # server support and http_app
 sse-starlette
