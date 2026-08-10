@@ -354,7 +354,8 @@ sync_thread = threading.Thread(target=run_background_sync, name="ReportSyncDaemo
 sync_thread.start()
 
 
-app = mcp.http_app()
+app = mcp.sse_app()
+
 
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 8080))
