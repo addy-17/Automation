@@ -3,3 +3,5 @@ pandas
 openpyxl
 numpy
 python-dotenv
+fastapi
+uvicorn
