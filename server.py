@@ -354,7 +354,7 @@ sync_thread = threading.Thread(target=run_background_sync, name="ReportSyncDaemo
 sync_thread.start()
 
 
-app = mcp.sse_app()
+app = mcp.http_app(path="/mcp")
 
 
 if __name__ == "__main__":
